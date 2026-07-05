@@ -1,0 +1,213 @@
+import fs from "node:fs";
+import path from "node:path";
+import { v4 as uuidv4 } from "uuid";
+import type { DubbingResult, DubbingSettings, ProcessingStep, VoiceOptions } from "../types/workflow.js";
+import { extractAudioFromVideo, getMediaDuration, getVideoDuration, mergeVoiceWithVideo, normalizeToMp3 } from "./ffmpeg.service.js";
+import { DemucsError, separateVocalsWithDemucs } from "./demucs.service.js";
+import { transcribeAudio } from "./transcription.service.js";
+import { translateToKhmer } from "./translation.service.js";
+import { synthesizeKhmerVoice } from "./tts.service.js";
+
+const ROOT_DIR = path.basename(process.cwd()) === "server" ? path.resolve(process.cwd(), "..") : process.cwd();
+const TEMP_DIR = path.join(ROOT_DIR, "temp");
+const VOICES_DIR = path.join(ROOT_DIR, "voices");
+const EXPORT_DIR = path.join(ROOT_DIR, "exports");
+
+function createSteps(): ProcessingStep[] {
+  return [
+    { key: "upload", label: "Upload", status: "completed" },
+    { key: "extract-audio", label: "Extract Audio", status: "pending" },
+    { key: "separate-vocals", label: "AI Vocal Separation (Demucs)", status: "pending" },
+    { key: "transcribe", label: "Transcribe", status: "pending" },
+    { key: "translate", label: "Translate", status: "pending" },
+    { key: "generate-voice", label: "Generate Khmer Voice", status: "pending" },
+    { key: "replace-audio", label: "Replace Audio", status: "pending" },
+    { key: "export", label: "Export MP4", status: "pending" }
+  ];
+}
+
+function setStepStatus(
+  steps: ProcessingStep[],
+  key: ProcessingStep["key"],
+  status: ProcessingStep["status"],
+  message?: string
+): void {
+  const step = steps.find((item) => item.key === key);
+  if (!step) {
+    return;
+  }
+
+  step.status = status;
+  if (message) {
+    step.message = message;
+  }
+}
+
+export interface WorkflowInput {
+  sourceVideoPath: string;
+  sourceFileName: string;
+  settings: DubbingSettings;
+  voice: VoiceOptions;
+}
+
+export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingResult> {
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+  fs.mkdirSync(VOICES_DIR, { recursive: true });
+  fs.mkdirSync(EXPORT_DIR, { recursive: true });
+
+  const jobId = uuidv4();
+  const steps = createSteps();
+
+  const extractedAudioPath = path.join(TEMP_DIR, `${jobId}.wav`);
+  const generatedVoiceBasePath = path.join(TEMP_DIR, `${jobId}.tts`);
+  const normalizedVoicePath = path.join(EXPORT_DIR, `${jobId}.voice.mp3`);
+  const exportedVideoPath = path.join(EXPORT_DIR, `${jobId}.mp4`);
+  const demucsTempDir = path.join(TEMP_DIR, `demucs-${jobId}`);
+  let instrumentalAudioPath: string | undefined;
+
+  try {
+    console.log(
+      `[Workflow:${jobId}] Starting dubbing | source=${input.sourceFileName} removeOriginalVoices=${input.settings.removeOriginalVoices}`
+    );
+
+    setStepStatus(steps, "extract-audio", "running");
+    await extractAudioFromVideo(input.sourceVideoPath, extractedAudioPath);
+    setStepStatus(steps, "extract-audio", "completed");
+
+    if (input.settings.removeOriginalVoices) {
+      setStepStatus(steps, "separate-vocals", "running");
+      try {
+        const separation = await separateVocalsWithDemucs(extractedAudioPath, TEMP_DIR, jobId);
+        instrumentalAudioPath = separation.instrumentalPath;
+        console.log(
+          `[Workflow:${jobId}] Demucs separation success | vocals discarded | instrumental=${separation.instrumentalPath}`
+        );
+        setStepStatus(steps, "separate-vocals", "completed", "Vocals removed. Using instrumental track.");
+      } catch (error) {
+        const message = error instanceof DemucsError ? error.message : "Unknown Demucs error";
+        console.error(`[Workflow:${jobId}] Demucs separation failed: ${message}`);
+        setStepStatus(
+          steps,
+          "separate-vocals",
+          "completed",
+          `Demucs failed (${message}). Continuing with original-audio fallback.`
+        );
+      }
+    } else {
+      setStepStatus(steps, "separate-vocals", "completed", "Skipped (Remove Original Voices is disabled).");
+    }
+
+    setStepStatus(steps, "transcribe", "running");
+    if (!input.settings.groqApiKey) {
+      throw new Error("Missing Groq API key.");
+    }
+
+    const transcription = await transcribeAudio(extractedAudioPath, input.settings.groqApiKey);
+    setStepStatus(steps, "transcribe", "completed");
+
+    setStepStatus(steps, "translate", "running");
+    if (!input.settings.geminiApiKey) {
+      throw new Error("Missing Gemini API key.");
+    }
+
+    const translated = await translateToKhmer(
+      transcription.transcript,
+      transcription.subtitles,
+      input.settings.geminiApiKey
+    );
+    setStepStatus(steps, "translate", "completed");
+
+    setStepStatus(steps, "generate-voice", "running");
+    console.log(`[Workflow:${jobId}] Generating Khmer voice`);
+    const synthesizedVoice = await synthesizeKhmerVoice(
+      translated.translatedTranscript,
+      generatedVoiceBasePath,
+      input.voice,
+      input.settings.geminiApiKey
+    );
+    console.log(
+      `[Workflow:${jobId}] TTS output ready | mime=${synthesizedVoice.mimeType} bytes=${synthesizedVoice.byteLength} file=${synthesizedVoice.filePath}`
+    );
+
+    const rawDuration = await getMediaDuration(synthesizedVoice.filePath).catch(() => 0);
+    if (rawDuration <= 0) {
+      throw new Error("TTS audio was not generated");
+    }
+
+    await normalizeToMp3(synthesizedVoice.filePath, normalizedVoicePath);
+    const normalizedDuration = await getMediaDuration(normalizedVoicePath).catch(() => 0);
+    if (normalizedDuration <= 0) {
+      throw new Error("TTS audio was not generated");
+    }
+
+    console.log(`[Workflow:${jobId}] Voice normalized to ${normalizedVoicePath}`);
+    setStepStatus(steps, "generate-voice", "completed");
+
+    setStepStatus(steps, "replace-audio", "running");
+    await mergeVoiceWithVideo(input.sourceVideoPath, normalizedVoicePath, exportedVideoPath, instrumentalAudioPath);
+    setStepStatus(steps, "replace-audio", "completed");
+
+    setStepStatus(steps, "export", "running");
+    const durationSeconds = await getVideoDuration(exportedVideoPath);
+    setStepStatus(steps, "export", "completed");
+
+    const result: DubbingResult = {
+      jobId,
+      sourceFileName: input.sourceFileName,
+      sourceLanguage: input.settings.sourceLanguage,
+      targetLanguage: "Khmer",
+      durationSeconds,
+      estimatedSeconds: Math.max(45, Math.ceil(durationSeconds * 1.2)),
+      status: "completed",
+      steps,
+      subtitles: translated.translatedSubtitles,
+      transcript: transcription.transcript,
+      translatedTranscript: translated.translatedTranscript,
+      videoUrl: `/exports/${path.basename(exportedVideoPath)}`,
+      voicePreviewUrl: `/exports/${path.basename(normalizedVoicePath)}`
+    };
+
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown dubbing error";
+
+    const runningStep = steps.find((step) => step.status === "running");
+    if (runningStep) {
+      runningStep.status = "failed";
+      runningStep.message = message;
+    }
+
+    return {
+      jobId,
+      sourceFileName: input.sourceFileName,
+      sourceLanguage: input.settings.sourceLanguage,
+      targetLanguage: "Khmer",
+      durationSeconds: 0,
+      estimatedSeconds: 0,
+      status: "failed",
+      steps,
+      subtitles: [],
+      transcript: "",
+      translatedTranscript: "",
+      error: message
+    };
+  } finally {
+    if (fs.existsSync(extractedAudioPath)) {
+      fs.rmSync(extractedAudioPath, { force: true });
+    }
+    const cleanupPaths = [
+      path.join(TEMP_DIR, `${jobId}.vocals.wav`),
+      path.join(TEMP_DIR, `${jobId}.instrumental.wav`),
+      demucsTempDir
+    ];
+    for (const cleanupPath of cleanupPaths) {
+      if (fs.existsSync(cleanupPath)) {
+        fs.rmSync(cleanupPath, { force: true, recursive: true });
+      }
+    }
+    const generatedVoiceFiles = fs.readdirSync(TEMP_DIR).filter((fileName) => fileName.startsWith(`${jobId}.tts.`));
+    for (const fileName of generatedVoiceFiles) {
+      fs.rmSync(path.join(TEMP_DIR, fileName), { force: true });
+    }
+  }
+}
