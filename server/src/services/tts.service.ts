@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { Emotion, VoiceOptions } from "../types/workflow.js";
+import type { Emotion, SubtitleCue, VoiceOptions } from "../types/workflow.js";
 import { getMediaDuration, normalizeToMp3 } from "./ffmpeg.service.js";
 
 const execFileAsync = promisify(execFile);
@@ -28,6 +28,14 @@ export interface SynthesizedVoiceResult {
   filePath: string;
   mimeType: string;
   byteLength: number;
+}
+
+export interface SynthesizedSubtitleSegment {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+  voice: SynthesizedVoiceResult;
 }
 
 const emotionStyles: Record<Emotion, string> = {
@@ -117,6 +125,36 @@ export async function synthesizeKhmerVoice(
   }
 
   throw new Error("TTS audio was not generated");
+}
+
+export async function synthesizeKhmerVoiceForSubtitles(
+  subtitles: SubtitleCue[],
+  outputDir: string,
+  options: VoiceOptions,
+  geminiApiKey?: string
+): Promise<SynthesizedSubtitleSegment[]> {
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const validSubtitles = subtitles
+    .map((subtitle, index) => ({ subtitle, index }))
+    .filter(({ subtitle }) => subtitle.end > subtitle.start && subtitle.text.trim().length > 0);
+
+  const synthesizedSegments: SynthesizedSubtitleSegment[] = [];
+
+  for (const { subtitle, index } of validSubtitles) {
+    const basePath = path.join(outputDir, `segment-${String(index).padStart(4, "0")}`);
+    const voice = await synthesizeKhmerVoice(subtitle.text, basePath, options, geminiApiKey);
+
+    synthesizedSegments.push({
+      index,
+      start: subtitle.start,
+      end: subtitle.end,
+      text: subtitle.text,
+      voice
+    });
+  }
+
+  return synthesizedSegments;
 }
 
 async function synthesizeWithGemini(

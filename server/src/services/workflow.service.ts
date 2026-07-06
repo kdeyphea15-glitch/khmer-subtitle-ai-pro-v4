@@ -2,11 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import type { DubbingResult, DubbingSettings, ProcessingStep, VoiceOptions } from "../types/workflow.js";
-import { extractAudioFromVideo, getMediaDuration, getVideoDuration, mergeVoiceWithVideo, normalizeToMp3 } from "./ffmpeg.service.js";
+import {
+  buildTimelineAudioTrack,
+  extractAudioFromVideo,
+  fitAudioToDurationWithAtempo,
+  getVideoDuration,
+  mergeVoiceWithVideo
+} from "./ffmpeg.service.js";
 import { DemucsError, separateVocalsWithDemucs } from "./demucs.service.js";
 import { transcribeAudio } from "./transcription.service.js";
 import { translateToKhmer } from "./translation.service.js";
-import { synthesizeKhmerVoice } from "./tts.service.js";
+import { synthesizeKhmerVoiceForSubtitles } from "./tts.service.js";
 
 const ROOT_DIR = path.basename(process.cwd()) === "server" ? path.resolve(process.cwd(), "..") : process.cwd();
 const TEMP_DIR = path.join(ROOT_DIR, "temp");
@@ -59,7 +65,9 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
   const steps = createSteps();
 
   const extractedAudioPath = path.join(TEMP_DIR, `${jobId}.wav`);
-  const generatedVoiceBasePath = path.join(TEMP_DIR, `${jobId}.tts`);
+  const generatedVoiceSegmentsDir = path.join(TEMP_DIR, `${jobId}.segments`);
+  const adjustedVoiceSegmentsDir = path.join(TEMP_DIR, `${jobId}.segments-adjusted`);
+  const timelineTempDir = path.join(TEMP_DIR, `${jobId}.timeline`);
   const normalizedVoicePath = path.join(EXPORT_DIR, `${jobId}.voice.mp3`);
   const exportedVideoPath = path.join(EXPORT_DIR, `${jobId}.mp4`);
   const demucsTempDir = path.join(TEMP_DIR, `demucs-${jobId}`);
@@ -69,6 +77,8 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
     console.log(
       `[Workflow:${jobId}] Starting dubbing | source=${input.sourceFileName} removeOriginalVoices=${input.settings.removeOriginalVoices}`
     );
+
+    const sourceVideoDuration = await getVideoDuration(input.sourceVideoPath).catch(() => 0);
 
     setStepStatus(steps, "extract-audio", "running");
     await extractAudioFromVideo(input.sourceVideoPath, extractedAudioPath);
@@ -118,27 +128,49 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
     setStepStatus(steps, "translate", "completed");
 
     setStepStatus(steps, "generate-voice", "running");
-    console.log(`[Workflow:${jobId}] Generating Khmer voice`);
-    const synthesizedVoice = await synthesizeKhmerVoice(
-      translated.translatedTranscript,
-      generatedVoiceBasePath,
+    console.log(`[Workflow:${jobId}] Generating Khmer subtitle segments`);
+
+    const synthesizedSegments = await synthesizeKhmerVoiceForSubtitles(
+      translated.translatedSubtitles,
+      generatedVoiceSegmentsDir,
       input.voice,
       input.settings.geminiApiKey
     );
-    console.log(
-      `[Workflow:${jobId}] TTS output ready | mime=${synthesizedVoice.mimeType} bytes=${synthesizedVoice.byteLength} file=${synthesizedVoice.filePath}`
+
+    if (!synthesizedSegments.length) {
+      throw new Error("No subtitle segments available for TTS generation.");
+    }
+
+    fs.mkdirSync(adjustedVoiceSegmentsDir, { recursive: true });
+    const timelineSegments: Array<{ start: number; end: number; audioPath: string }> = [];
+
+    for (const segment of synthesizedSegments) {
+      const targetDuration = Math.max(0.01, segment.end - segment.start);
+      const adjustedSegmentPath = path.join(adjustedVoiceSegmentsDir, `segment-${String(segment.index).padStart(4, "0")}.wav`);
+      const fitResult = await fitAudioToDurationWithAtempo(segment.voice.filePath, adjustedSegmentPath, targetDuration, {
+        minTempo: 0.85,
+        maxTempo: 1.25,
+        volumeGainDb: input.voice.volumeGainDb,
+        speedMultiplier: input.voice.speed
+      });
+
+      console.log(
+        `[Workflow:${jobId}] Segment ${segment.index} fit | start=${segment.start.toFixed(2)} end=${segment.end.toFixed(2)} requestedTempo=${fitResult.requestedTempo.toFixed(3)} appliedTempo=${fitResult.appliedTempo.toFixed(3)} outDuration=${fitResult.outputDuration.toFixed(3)}`
+      );
+
+      timelineSegments.push({
+        start: segment.start,
+        end: segment.end,
+        audioPath: adjustedSegmentPath
+      });
+    }
+
+    await buildTimelineAudioTrack(
+      timelineSegments,
+      normalizedVoicePath,
+      sourceVideoDuration > 0 ? sourceVideoDuration : timelineSegments[timelineSegments.length - 1].end,
+      timelineTempDir
     );
-
-    const rawDuration = await getMediaDuration(synthesizedVoice.filePath).catch(() => 0);
-    if (rawDuration <= 0) {
-      throw new Error("TTS audio was not generated");
-    }
-
-    await normalizeToMp3(synthesizedVoice.filePath, normalizedVoicePath);
-    const normalizedDuration = await getMediaDuration(normalizedVoicePath).catch(() => 0);
-    if (normalizedDuration <= 0) {
-      throw new Error("TTS audio was not generated");
-    }
 
     console.log(`[Workflow:${jobId}] Voice normalized to ${normalizedVoicePath}`);
     setStepStatus(steps, "generate-voice", "completed");
@@ -198,16 +230,23 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
     const cleanupPaths = [
       path.join(TEMP_DIR, `${jobId}.vocals.wav`),
       path.join(TEMP_DIR, `${jobId}.instrumental.wav`),
-      demucsTempDir
+      demucsTempDir,
+      generatedVoiceSegmentsDir,
+      adjustedVoiceSegmentsDir,
+      timelineTempDir
     ];
     for (const cleanupPath of cleanupPaths) {
       if (fs.existsSync(cleanupPath)) {
         fs.rmSync(cleanupPath, { force: true, recursive: true });
       }
     }
-    const generatedVoiceFiles = fs.readdirSync(TEMP_DIR).filter((fileName) => fileName.startsWith(`${jobId}.tts.`));
-    for (const fileName of generatedVoiceFiles) {
-      fs.rmSync(path.join(TEMP_DIR, fileName), { force: true });
+    if (fs.existsSync(TEMP_DIR)) {
+      const generatedVoiceFiles = fs
+        .readdirSync(TEMP_DIR)
+        .filter((fileName) => fileName.startsWith(`${jobId}.tts.`) || fileName.startsWith(`${jobId}.segment.`));
+      for (const fileName of generatedVoiceFiles) {
+        fs.rmSync(path.join(TEMP_DIR, fileName), { force: true });
+      }
     }
   }
 }
