@@ -1,4 +1,5 @@
 export type Emotion = "normal" | "happy" | "sad" | "angry" | "romantic";
+export type TtsProvider = "openai" | "gemini";
 
 export interface WorkflowStep {
   key: string;
@@ -33,6 +34,6 @@ export interface DubbingResult {
 export interface SettingsState {
   geminiApiKey: string;
   groqApiKey: string;
-  theme: "dark";
-  language: "Khmer" | "English";
+  openaiApiKey: string;
+  ttsProvider: TtsProvider;
 }

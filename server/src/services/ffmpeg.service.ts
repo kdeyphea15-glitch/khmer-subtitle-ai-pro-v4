@@ -1,15 +1,49 @@
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 import fs from "node:fs";
 import path from "node:path";
 
-export function configureFfmpeg(): void {
-  const staticPath = typeof ffmpegStatic === "string" ? ffmpegStatic : undefined;
-  const resolvedPath = staticPath || process.env.FFMPEG_PATH;
+let ffmpegConfigured = false;
 
-  if (resolvedPath && fs.existsSync(resolvedPath)) {
-    ffmpeg.setFfmpegPath(resolvedPath);
+function resolveFfprobePath(): string | undefined {
+  if (typeof ffprobeStatic === "string") {
+    return ffprobeStatic;
   }
+
+  if (ffprobeStatic && typeof ffprobeStatic === "object" && "path" in ffprobeStatic) {
+    const candidate = (ffprobeStatic as { path?: string }).path;
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+export function configureFfmpeg(): void {
+  if (ffmpegConfigured) {
+    return;
+  }
+
+  const staticPath = typeof ffmpegStatic === "string" ? ffmpegStatic : undefined;
+  const resolvedFfmpegPath = process.env.FFMPEG_PATH || staticPath;
+  const resolvedFfprobePath = process.env.FFPROBE_PATH || resolveFfprobePath();
+
+  if (!resolvedFfmpegPath || !fs.existsSync(resolvedFfmpegPath)) {
+    throw new Error(`FFmpeg binary not found. Resolved path: ${resolvedFfmpegPath ?? "undefined"}`);
+  }
+
+  if (!resolvedFfprobePath || !fs.existsSync(resolvedFfprobePath)) {
+    throw new Error(`FFprobe binary not found. Resolved path: ${resolvedFfprobePath ?? "undefined"}`);
+  }
+
+  ffmpeg.setFfmpegPath(resolvedFfmpegPath);
+  ffmpeg.setFfprobePath(resolvedFfprobePath);
+  ffmpegConfigured = true;
+
+  console.log(`[FFmpeg] Configured ffmpeg path: ${resolvedFfmpegPath}`);
+  console.log(`[FFmpeg] Configured ffprobe path: ${resolvedFfprobePath}`);
 }
 
 export function runFfmpeg(command: ffmpeg.FfmpegCommand): Promise<void> {
@@ -186,17 +220,31 @@ export async function generateSilenceAudio(outputAudioPath: string, durationSeco
   const duration = Math.max(0.01, durationSeconds);
   fs.mkdirSync(path.dirname(outputAudioPath), { recursive: true });
 
-  await runFfmpeg(
-    ffmpeg()
-      .input(`anullsrc=r=24000:cl=mono`)
-      .inputFormat("lavfi")
-      .duration(duration)
-      .audioCodec("pcm_s16le")
-      .audioChannels(1)
-      .audioFrequency(24000)
-      .format("wav")
-      .output(outputAudioPath)
-  );
+  const sampleRate = 24000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const totalSamples = Math.max(1, Math.round(duration * sampleRate));
+  const dataSize = totalSamples * channels * (bitsPerSample / 8);
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  const silence = Buffer.alloc(dataSize, 0);
+  fs.writeFileSync(outputAudioPath, Buffer.concat([header, silence]));
 }
 
 export async function concatenateAudioFiles(inputAudioPaths: string[], outputAudioPath: string): Promise<void> {

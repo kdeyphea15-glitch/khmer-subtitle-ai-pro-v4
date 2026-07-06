@@ -5,8 +5,11 @@ import fs from "node:fs";
 import type { NextFunction, Request, Response } from "express";
 import { env } from "./config/env.js";
 import { dubbingRouter } from "./routes/dubbing.routes.js";
+import { configureFfmpeg } from "./services/ffmpeg.service.js";
 
 const app = express();
+
+configureFfmpeg();
 
 const rootDir = path.basename(process.cwd()) === "server" ? path.resolve(process.cwd(), "..") : process.cwd();
 const exportsDir = path.join(rootDir, "exports");

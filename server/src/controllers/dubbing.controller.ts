@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { env } from "../config/env.js";
-import { configureFfmpeg } from "../services/ffmpeg.service.js";
 import { runDubbingWorkflow } from "../services/workflow.service.js";
 import { synthesizeKhmerVoice } from "../services/tts.service.js";
 
@@ -43,7 +42,6 @@ export async function runDubbing(req: Request, res: Response): Promise<void> {
   }
 
   const payload = parsed.data;
-  configureFfmpeg();
 
   try {
     const result = await runDubbingWorkflow({
@@ -79,8 +77,6 @@ export async function runDubbing(req: Request, res: Response): Promise<void> {
 }
 
 export async function previewVoice(req: Request, res: Response): Promise<void> {
-  configureFfmpeg();
-
   const parsed = previewSchema.safeParse(req.body);
 
   if (!parsed.success) {

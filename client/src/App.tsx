@@ -1,27 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { motion } from "framer-motion";
-import {
-  AudioLines,
-  BadgeCheck,
-  Clapperboard,
-  Cog,
-  FolderKanban,
-  Headphones,
-  HelpCircle,
-  History,
-  Languages,
-  UploadCloud,
-  Video
-} from "lucide-react";
 import clsx from "clsx";
 import axios from "axios";
+import { CheckCircle2, Download, Languages, LoaderCircle, Settings2, UploadCloud, Video } from "lucide-react";
 import { API_BASE_URL, checkBackendHealth, previewVoice, runDubbing, toAssetUrl } from "./api";
 import HeroBanner from "./components/HeroBanner";
 import type { DubbingResult, Emotion, SettingsState, SubtitleCue, WorkflowStep } from "./types";
 
 const workflowLabels: WorkflowStep[] = [
   { key: "upload", label: "Upload", status: "pending" },
-  { key: "separate-vocals", label: "AI Vocal Separation (Demucs)", status: "pending" },
+  { key: "extract-audio", label: "Extract Audio", status: "pending" },
+  { key: "separate-vocals", label: "AI Vocal Separation", status: "pending" },
   { key: "transcribe", label: "Transcribe", status: "pending" },
   { key: "translate", label: "Translate", status: "pending" },
   { key: "generate-voice", label: "Generate Khmer Voice", status: "pending" },
@@ -36,29 +25,15 @@ const voiceChoices = [
 
 const GEMINI_KEY_STORAGE = "khmer-v4-gemini-api-key";
 const GROQ_KEY_STORAGE = "khmer-v4-groq-api-key";
+const OPENAI_KEY_STORAGE = "khmer-v4-openai-api-key";
+const TTS_PROVIDER_STORAGE = "khmer-v4-tts-provider";
 const SUBTITLE_DEFAULT_FONT_SIZE = 20;
 const SUBTITLE_MIN_FONT_SIZE = 16;
-const SUBTITLE_MAX_FONT_SIZE = 26;
+const SUBTITLE_MAX_FONT_SIZE = 28;
 const SUBTITLE_LINE_HEIGHT = 1.6;
 const SUBTITLE_VIEWPORT_HEIGHT = 320;
 const SUBTITLE_OVERSCAN = 8;
-const UI_UPDATE_INTERVAL_MS = 120;
-const DEMUCS_SETUP_COMMANDS = [
-  "python3 -m venv .venv-demucs",
-  "source .venv-demucs/bin/activate",
-  "python3 -m pip install --upgrade pip demucs"
-].join("\n");
-
-const sidebarItems = [
-  { icon: Clapperboard, label: "Home" },
-  { icon: FolderKanban, label: "Projects" },
-  { icon: History, label: "History" },
-  { icon: Headphones, label: "AI Voice" },
-  { icon: Cog, label: "Settings" },
-  { icon: AudioLines, label: "API Services" },
-  { icon: HelpCircle, label: "Support" },
-  { icon: BadgeCheck, label: "About" }
-];
+const TARGET_LANGUAGE = "Khmer";
 
 function readStoredValue(key: string): string {
   if (typeof window === "undefined") {
@@ -66,6 +41,11 @@ function readStoredValue(key: string): string {
   }
 
   return window.localStorage.getItem(key) ?? "";
+}
+
+function readStoredTtsProvider(): "openai" | "gemini" {
+  const value = readStoredValue(TTS_PROVIDER_STORAGE).toLowerCase();
+  return value === "gemini" ? "gemini" : "openai";
 }
 
 function formatTime(seconds: number): string {
@@ -120,7 +100,6 @@ const SubtitleVirtualList = memo(function SubtitleVirtualList({ subtitles, fontS
   const visibleCount = Math.ceil(SUBTITLE_VIEWPORT_HEIGHT / rowHeight) + SUBTITLE_OVERSCAN * 2;
   const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - SUBTITLE_OVERSCAN);
   const endIndex = Math.min(subtitles.length, startIndex + visibleCount);
-
   const visibleRows = useMemo(() => subtitles.slice(startIndex, endIndex), [subtitles, startIndex, endIndex]);
 
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
@@ -148,7 +127,7 @@ const SubtitleVirtualList = memo(function SubtitleVirtualList({ subtitles, fontS
   if (!subtitles.length) {
     return (
       <div className="subtitle-box subtitle-scroll-area" style={{ minHeight: SUBTITLE_VIEWPORT_HEIGHT }}>
-        Subtitle lines will appear after translation.
+        Khmer subtitles will appear here after translation.
       </div>
     );
   }
@@ -182,97 +161,37 @@ interface MediaPreviewProps {
 }
 
 const MediaPreview = memo(function MediaPreview({ videoSrc, audioSrc, onAudioError }: MediaPreviewProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const frameRef = useRef<number | null>(null);
   const [videoTime, setVideoTime] = useState(0);
   const [audioTime, setAudioTime] = useState(0);
 
-  const runRafLoop = useCallback(() => {
-    let lastUpdateAt = performance.now();
-
-    const update = (timestamp: number) => {
-      const elapsed = timestamp - lastUpdateAt;
-      if (elapsed >= UI_UPDATE_INTERVAL_MS) {
-        if (videoRef.current) {
-          setVideoTime(videoRef.current.currentTime);
-        }
-        if (audioRef.current) {
-          setAudioTime(audioRef.current.currentTime);
-        }
-        lastUpdateAt = timestamp;
-      }
-
-      const shouldContinue = Boolean(videoRef.current?.paused === false || audioRef.current?.paused === false);
-      if (shouldContinue) {
-        frameRef.current = requestAnimationFrame(update);
-      } else {
-        frameRef.current = null;
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(update);
-  }, []);
-
-  const startRafIfNeeded = useCallback(() => {
-    if (frameRef.current !== null) {
-      return;
-    }
-    runRafLoop();
-  }, [runRafLoop]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    const audio = audioRef.current;
-
-    if (!video || !audio) {
-      return;
-    }
-
-    const handleMediaActivity = () => startRafIfNeeded();
-
-    video.addEventListener("play", handleMediaActivity);
-    video.addEventListener("seeked", handleMediaActivity);
-    audio.addEventListener("play", handleMediaActivity);
-    audio.addEventListener("seeked", handleMediaActivity);
-
-    return () => {
-      video.removeEventListener("play", handleMediaActivity);
-      video.removeEventListener("seeked", handleMediaActivity);
-      audio.removeEventListener("play", handleMediaActivity);
-      audio.removeEventListener("seeked", handleMediaActivity);
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-      }
-    };
-  }, [startRafIfNeeded]);
-
   return (
-    <>
-      <div>
+    <div className="media-preview-grid">
+      <article>
         <h3>Video Preview</h3>
-        <video ref={videoRef} controls preload="metadata" src={videoSrc || undefined} />
+        <video
+          controls
+          preload="metadata"
+          src={videoSrc || undefined}
+          onTimeUpdate={(event) => setVideoTime(event.currentTarget.currentTime)}
+        />
         <p className="media-progress">Progress: {formatTime(videoTime)}</p>
-      </div>
+      </article>
 
-      <div>
-        <h3>Generated Voice Preview</h3>
+      <article>
+        <h3>Voice Preview</h3>
         <audio
-          ref={audioRef}
           controls
           preload="metadata"
           src={audioSrc || undefined}
-          onCanPlay={() => {
-            console.log(`[PreviewVoice] Audio element can play: ${audioSrc}`);
-          }}
+          onTimeUpdate={(event) => setAudioTime(event.currentTarget.currentTime)}
           onError={(event) => {
             const mediaErrorCode = event.currentTarget.error?.code;
             onAudioError(`Audio playback failed (code ${mediaErrorCode ?? "unknown"}).`);
           }}
         />
         <p className="media-progress">Progress: {formatTime(audioTime)}</p>
-      </div>
-    </>
+      </article>
+    </div>
   );
 });
 
@@ -290,16 +209,16 @@ function App() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<DubbingResult | null>(null);
   const [error, setError] = useState("");
+  const [healthStatus, setHealthStatus] = useState<"checking" | "online" | "offline">("checking");
   const [subtitleFontSize, setSubtitleFontSize] = useState(SUBTITLE_DEFAULT_FONT_SIZE);
-  const [isScrolling, setIsScrolling] = useState(false);
-  const scrollDebounceRef = useRef<number | null>(null);
+
   const previewBlobUrlRef = useRef<string | null>(null);
 
   const [settings, setSettings] = useState<SettingsState>({
     geminiApiKey: readStoredValue(GEMINI_KEY_STORAGE),
     groqApiKey: readStoredValue(GROQ_KEY_STORAGE),
-    theme: "dark",
-    language: "Khmer"
+    openaiApiKey: readStoredValue(OPENAI_KEY_STORAGE),
+    ttsProvider: readStoredTtsProvider()
   });
 
   const [previewVideoUrl, setPreviewVideoUrl] = useState("");
@@ -313,13 +232,23 @@ function App() {
   }, [settings.groqApiKey]);
 
   useEffect(() => {
+    window.localStorage.setItem(OPENAI_KEY_STORAGE, settings.openaiApiKey);
+  }, [settings.openaiApiKey]);
+
+  useEffect(() => {
+    window.localStorage.setItem(TTS_PROVIDER_STORAGE, settings.ttsProvider);
+  }, [settings.ttsProvider]);
+
+  useEffect(() => {
     checkBackendHealth()
       .then(() => {
+        setHealthStatus("online");
         setError((current) =>
           current.includes("Cannot reach backend") || current.includes("Backend health check") ? "" : current
         );
       })
       .catch((healthError) => {
+        setHealthStatus("offline");
         setError(getApiErrorMessage(healthError, "Backend health check failed."));
       });
   }, []);
@@ -332,32 +261,6 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const onScroll = () => {
-      if (!isScrolling) {
-        setIsScrolling(true);
-      }
-
-      if (scrollDebounceRef.current !== null) {
-        window.clearTimeout(scrollDebounceRef.current);
-      }
-
-      scrollDebounceRef.current = window.setTimeout(() => {
-        setIsScrolling(false);
-        scrollDebounceRef.current = null;
-      }, 140);
-    };
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      if (scrollDebounceRef.current !== null) {
-        window.clearTimeout(scrollDebounceRef.current);
-      }
-    };
-  }, [isScrolling]);
-
   const progressSteps = useMemo(() => {
     if (!result) {
       return workflowLabels;
@@ -368,13 +271,19 @@ function App() {
 
   const subtitles = useMemo(() => result?.subtitles ?? [], [result]);
 
-  const subtitleText = useMemo(() => {
-    if (!subtitles.length) {
-      return "";
+  const providerMissingMessage = useMemo(() => {
+    if (settings.ttsProvider === "openai" && !settings.openaiApiKey.trim()) {
+      return "OpenAI API Key is required when TTS Provider is OpenAI.";
     }
 
-    return subtitles.map((cue) => cue.text).join("\n");
-  }, [subtitles]);
+    if (settings.ttsProvider === "gemini" && !settings.geminiApiKey.trim()) {
+      return "Gemini API Key is required when TTS Provider is Gemini.";
+    }
+
+    return "";
+  }, [settings.geminiApiKey, settings.openaiApiKey, settings.ttsProvider]);
+
+  const canPreviewVoice = useMemo(() => !providerMissingMessage && voicePreviewText.trim().length > 0, [providerMissingMessage, voicePreviewText]);
 
   const toSrtTimestamp = useCallback((secondsValue: number) => {
     const totalMs = Math.max(0, Math.round(secondsValue * 1000));
@@ -392,10 +301,7 @@ function App() {
     }
 
     return subtitles
-      .map(
-        (cue, index) =>
-          `${index + 1}\n${toSrtTimestamp(cue.start)} --> ${toSrtTimestamp(cue.end)}\n${cue.text}`
-      )
+      .map((cue, index) => `${index + 1}\n${toSrtTimestamp(cue.start)} --> ${toSrtTimestamp(cue.end)}\n${cue.text}`)
       .join("\n\n");
   }, [subtitles, toSrtTimestamp]);
 
@@ -406,20 +312,6 @@ function App() {
   const handleSubtitleFontDecrease = useCallback(() => {
     setSubtitleFontSize((current) => Math.max(SUBTITLE_MIN_FONT_SIZE, current - 2));
   }, []);
-
-  const handleCopySubtitle = useCallback(async () => {
-    if (!subtitleText) {
-      setError("No subtitles available to copy yet.");
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(subtitleText);
-      setError("Subtitles copied to clipboard.");
-    } catch {
-      setError("Failed to copy subtitles. Please try again.");
-    }
-  }, [subtitleText]);
 
   const handleDownloadSrt = useCallback(() => {
     if (!subtitleSrtText) {
@@ -464,42 +356,55 @@ function App() {
 
   const handlePreviewVoice = useCallback(async () => {
     setError("");
+
+    if (providerMissingMessage) {
+      setError(providerMissingMessage);
+      return;
+    }
+
     try {
       const data = await previewVoice({
         text: voicePreviewText,
+        ttsProvider: settings.ttsProvider,
         voiceName,
         voiceSpeed,
         voiceVolume,
         emotion,
-        geminiApiKey: settings.geminiApiKey || undefined
+        geminiApiKey: settings.geminiApiKey || undefined,
+        openaiApiKey: settings.openaiApiKey || undefined
       });
 
       const absoluteAudioUrl = toAssetUrl(data.audioUrl);
-      const audioResponse = await fetch(absoluteAudioUrl, { method: "GET" });
-      if (!audioResponse.ok) {
-        throw new Error(`Preview audio fetch failed with status ${audioResponse.status}`);
-      }
-
-      const audioBlob = await audioResponse.blob();
-      if (!audioBlob.size) {
-        throw new Error("Preview audio response was empty.");
-      }
-
       const playbackUrl = `${absoluteAudioUrl}${absoluteAudioUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
       setVoicePreviewUrl(playbackUrl);
     } catch (previewError) {
       setError(getApiErrorMessage(previewError, "Voice preview failed."));
     }
-  }, [emotion, settings.geminiApiKey, voiceName, voicePreviewText, voiceSpeed, voiceVolume]);
+  }, [
+    emotion,
+    providerMissingMessage,
+    settings.geminiApiKey,
+    settings.openaiApiKey,
+    settings.ttsProvider,
+    voiceName,
+    voicePreviewText,
+    voiceSpeed,
+    voiceVolume
+  ]);
 
   const handleRun = useCallback(async () => {
     if (!file) {
-      setError("Please upload a video before running AI dubbing.");
+      setError("Please upload a video before running dubbing.");
       return;
     }
 
     if (!settings.geminiApiKey || !settings.groqApiKey) {
-      setError("Please provide both Gemini API Key and Groq API Key in Settings.");
+      setError("Gemini API Key and Groq API Key are required for translation and transcription.");
+      return;
+    }
+
+    if (providerMissingMessage) {
+      setError(providerMissingMessage);
       return;
     }
 
@@ -512,18 +417,22 @@ function App() {
         file,
         sourceLanguage,
         removeOriginalVoices,
+        ttsProvider: settings.ttsProvider,
         voiceName,
         voiceSpeed,
         voiceVolume,
         emotion,
         geminiApiKey: settings.geminiApiKey || undefined,
-        groqApiKey: settings.groqApiKey || undefined
+        groqApiKey: settings.groqApiKey || undefined,
+        openaiApiKey: settings.openaiApiKey || undefined
       });
 
       setResult(data);
+
       if (data.voicePreviewUrl) {
         setVoicePreviewUrl(toAssetUrl(data.voicePreviewUrl));
       }
+
       if (data.videoUrl) {
         if (previewBlobUrlRef.current) {
           URL.revokeObjectURL(previewBlobUrlRef.current);
@@ -532,7 +441,7 @@ function App() {
         setPreviewVideoUrl(toAssetUrl(data.videoUrl));
       }
     } catch (runError) {
-      setError(getApiErrorMessage(runError, "Processing failed."));
+      setError(getApiErrorMessage(runError, "Dubbing failed."));
     } finally {
       setRunning(false);
     }
@@ -542,7 +451,10 @@ function App() {
     removeOriginalVoices,
     settings.geminiApiKey,
     settings.groqApiKey,
+    settings.openaiApiKey,
+    settings.ttsProvider,
     sourceLanguage,
+    providerMissingMessage,
     voiceName,
     voiceSpeed,
     voiceVolume
@@ -552,44 +464,22 @@ function App() {
     setError(message);
   }, []);
 
-  const handleDemucsSetupHelp = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(DEMUCS_SETUP_COMMANDS);
-      setError("Demucs macOS setup commands copied. Run them in project root, then restart server.");
-    } catch {
-      setError(`Demucs macOS setup:\n${DEMUCS_SETUP_COMMANDS}\nRestart server after install.`);
-    }
-  }, []);
-
   return (
-    <div className={clsx("app-shell", isScrolling && "is-scrolling")}>
-      <aside className="sidebar glass-card perf-layer">
-        <div className="logo-wrap">
-          <div className="logo-mark">K</div>
-          <div>
-            <p className="logo-title">Khmer Subtitle AI Pro V4</p>
-            <p className="logo-sub">AI Dubbing Studio</p>
-          </div>
-        </div>
-
-        <nav className="menu-list">
-          {sidebarItems.map((item) => (
-            <button key={item.label} className="menu-item" type="button">
-              <item.icon size={18} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      <main className="content-area perf-layer">
+    <div className="app-shell">
+      <main className="content-area">
         <HeroBanner running={running} onRun={handleRun} />
 
-        <section className="grid-panels perf-layer">
-          <article className="glass-card panel perf-layer">
+        <section className="layout-grid">
+          <article className="panel card upload-panel">
             <h2>
-              <UploadCloud size={18} /> Upload Panel
+              <UploadCloud size={18} /> Upload Video
             </h2>
+            <div className="status-strip" role="status" aria-live="polite">
+              <span className={clsx("status-pill", `status-${healthStatus}`)}>
+                Backend: {healthStatus === "checking" ? "Checking" : healthStatus === "online" ? "Online" : "Offline"}
+              </span>
+              <span className="status-pill status-neutral">TTS: {settings.ttsProvider === "openai" ? "OpenAI" : "Gemini"}</span>
+            </div>
             <div
               className={clsx("drop-zone", dragOver && "drop-zone-active")}
               onDragOver={(event) => {
@@ -603,7 +493,7 @@ function App() {
                 onDropFile(event.dataTransfer.files?.[0]);
               }}
             >
-              <p>{file ? file.name : "Drag & Drop Video"}</p>
+              <p>{file ? file.name : "Drag and drop your video here"}</p>
               <span>Supports MP4, MOV, MKV, AVI, WEBM</span>
               <input
                 type="file"
@@ -613,11 +503,97 @@ function App() {
             </div>
           </article>
 
-          <article className="glass-card panel perf-layer">
+          <article className="panel card settings-panel">
             <h2>
-              <Headphones size={18} /> Voice Panel
+              <Settings2 size={18} /> Settings
             </h2>
-            <div className="form-grid">
+
+            <div className="settings-grid">
+              <label>
+                Gemini API Key
+                <input
+                  type="password"
+                  value={settings.geminiApiKey}
+                  onChange={(event) => setSettings((state) => ({ ...state, geminiApiKey: event.target.value }))}
+                  placeholder="Required for translation"
+                />
+              </label>
+
+              <label>
+                Groq API Key
+                <input
+                  type="password"
+                  value={settings.groqApiKey}
+                  onChange={(event) => setSettings((state) => ({ ...state, groqApiKey: event.target.value }))}
+                  placeholder="Required for transcription"
+                />
+              </label>
+
+              <label>
+                OpenAI API Key
+                <input
+                  type="password"
+                  value={settings.openaiApiKey}
+                  onChange={(event) => setSettings((state) => ({ ...state, openaiApiKey: event.target.value }))}
+                  placeholder="Used when TTS Provider is OpenAI"
+                />
+              </label>
+
+              <label>
+                TTS Provider
+                <select
+                  value={settings.ttsProvider}
+                  onChange={(event) =>
+                    setSettings((state) => ({ ...state, ttsProvider: event.target.value as "openai" | "gemini" }))
+                  }
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="gemini">Gemini</option>
+                </select>
+              </label>
+
+              <div className="settings-note" role="note">
+                <strong>Provider requirement:</strong> {settings.ttsProvider === "openai" ? "OpenAI API Key required" : "Gemini API Key required"}
+              </div>
+
+              <label>
+                Source Language
+                <input value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value)} />
+              </label>
+
+              <label>
+                Target Language
+                <input value={TARGET_LANGUAGE} readOnly />
+              </label>
+
+              <label className="checkbox-label">
+                <span>Remove Original Voices</span>
+                <input
+                  type="checkbox"
+                  checked={removeOriginalVoices}
+                  onChange={(event) => setRemoveOriginalVoices(event.target.checked)}
+                />
+              </label>
+            </div>
+
+            <p className="panel-help">
+              Tip: Default TTS provider is OpenAI. Keep Gemini and Groq keys filled for full workflow.
+            </p>
+
+            {providerMissingMessage ? <p className="inline-warning">{providerMissingMessage}</p> : null}
+
+            <button className="primary-button" type="button" onClick={handleRun} disabled={running || !file}>
+              {running ? <LoaderCircle className="spin" size={18} /> : <Languages size={18} />}
+              {running ? "Processing..." : "Translate and Dub to Khmer"}
+            </button>
+          </article>
+
+          <article className="panel card voice-panel">
+            <h2>
+              <Languages size={18} /> Voice Setup
+            </h2>
+
+            <div className="settings-grid">
               <label>
                 Voice
                 <select value={voiceName} onChange={(event) => setVoiceName(event.target.value)}>
@@ -665,15 +641,19 @@ function App() {
               </label>
             </div>
 
-            <textarea value={voicePreviewText} onChange={(event) => setVoicePreviewText(event.target.value)} rows={3} />
-            <button className="secondary-button" type="button" onClick={handlePreviewVoice}>
-              Preview Voice
+            <label>
+              Preview Text
+              <textarea value={voicePreviewText} onChange={(event) => setVoicePreviewText(event.target.value)} rows={3} />
+            </label>
+
+            <button className="secondary-button" type="button" onClick={handlePreviewVoice} disabled={!canPreviewVoice}>
+              Preview Audio
             </button>
           </article>
 
-          <article className="glass-card panel perf-layer">
+          <article className="panel card status-panel">
             <h2>
-              <Languages size={18} /> Workflow Panel
+              <CheckCircle2 size={18} /> Workflow Status
             </h2>
             <ul className="workflow-list">
               {progressSteps.map((step, index) => (
@@ -691,101 +671,31 @@ function App() {
             </ul>
           </article>
 
-          <article className="glass-card panel wide perf-layer">
+          <article className="panel card preview-panel">
             <h2>
-              <Video size={18} /> Preview Panel
+              <Video size={18} /> Preview and Subtitles
             </h2>
-            <div className="preview-layout">
-              <MediaPreview videoSrc={previewVideoUrl} audioSrc={voicePreviewUrl} onAudioError={handleAudioError} />
 
-              <div>
-                <h3>Subtitle Preview</h3>
-                <div className="subtitle-toolbar">
-                  <button
-                    type="button"
-                    className="secondary-button subtitle-toolbar-button"
-                    onClick={handleSubtitleFontIncrease}
-                    aria-label="Increase subtitle font size"
-                  >
-                    A+
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button subtitle-toolbar-button"
-                    onClick={handleSubtitleFontDecrease}
-                    aria-label="Decrease subtitle font size"
-                  >
-                    A-
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button subtitle-toolbar-button"
-                    onClick={handleCopySubtitle}
-                  >
-                    Copy subtitle
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button subtitle-toolbar-button"
-                    onClick={handleDownloadSrt}
-                  >
-                    Download SRT
-                  </button>
-                </div>
-                <SubtitleVirtualList subtitles={subtitles} fontSize={subtitleFontSize} />
-              </div>
-            </div>
-          </article>
+            <MediaPreview videoSrc={previewVideoUrl} audioSrc={voicePreviewUrl} onAudioError={handleAudioError} />
 
-          <article className="glass-card panel perf-layer">
-            <h2>
-              <Cog size={18} /> Settings
-            </h2>
-            <div className="form-grid">
-              <label>
-                Gemini API Key
-                <input
-                  type="password"
-                  value={settings.geminiApiKey}
-                  onChange={(event) => setSettings((state) => ({ ...state, geminiApiKey: event.target.value }))}
-                />
-              </label>
-              <label>
-                Groq API Key
-                <input
-                  type="password"
-                  value={settings.groqApiKey}
-                  onChange={(event) => setSettings((state) => ({ ...state, groqApiKey: event.target.value }))}
-                />
-              </label>
-              <label>
-                Source Language
-                <input value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value)} />
-              </label>
-              <label>
-                Remove Original Voices
-                <input
-                  type="checkbox"
-                  checked={removeOriginalVoices}
-                  onChange={(event) => setRemoveOriginalVoices(event.target.checked)}
-                />
-              </label>
-              <button type="button" className="secondary-button" onClick={handleDemucsSetupHelp}>
-                Setup Demucs (macOS)
+            <div className="subtitle-toolbar">
+              <button type="button" className="secondary-button subtitle-toolbar-button" onClick={handleSubtitleFontIncrease}>
+                A+
               </button>
-              <p>
-                Demucs virtualenv path: .venv-demucs. If unavailable, workflow continues with fallback audio mixing.
-              </p>
-              <label>
-                Target Language
-                <input value={settings.language} readOnly />
-              </label>
+              <button type="button" className="secondary-button subtitle-toolbar-button" onClick={handleSubtitleFontDecrease}>
+                A-
+              </button>
+              <button type="button" className="secondary-button subtitle-toolbar-button" onClick={handleDownloadSrt}>
+                Download SRT
+              </button>
             </div>
+
+            <SubtitleVirtualList subtitles={subtitles} fontSize={subtitleFontSize} />
           </article>
 
-          <article className="glass-card panel perf-layer">
+          <article className="panel card output-panel">
             <h2>
-              <Clapperboard size={18} /> Output Panel
+              <Download size={18} /> Output
             </h2>
             <div className="output-metrics">
               <p>
@@ -794,30 +704,27 @@ function App() {
               </p>
               <p>
                 <span>Target Language</span>
-                <strong>Khmer</strong>
+                <strong>{TARGET_LANGUAGE}</strong>
               </p>
               <p>
                 <span>Duration</span>
                 <strong>{result ? `${result.durationSeconds.toFixed(1)}s` : "-"}</strong>
               </p>
               <p>
-                <span>Estimated Time</span>
-                <strong>{result ? `${result.estimatedSeconds}s` : running ? "Processing..." : "-"}</strong>
-              </p>
-              <p>
                 <span>Status</span>
                 <strong>{result?.status || (running ? "running" : "idle")}</strong>
               </p>
-              {result?.videoUrl ? (
-                <a className="secondary-button" href={toAssetUrl(result.videoUrl)} target="_blank" rel="noreferrer">
-                  Export MP4
-                </a>
-              ) : (
-                <button type="button" className="secondary-button" disabled>
-                  Export MP4
-                </button>
-              )}
             </div>
+
+            {result?.videoUrl ? (
+              <a className="primary-button" href={toAssetUrl(result.videoUrl)} target="_blank" rel="noreferrer">
+                Download or Export MP4
+              </a>
+            ) : (
+              <button type="button" className="primary-button" disabled>
+                Download or Export MP4
+              </button>
+            )}
           </article>
         </section>
 

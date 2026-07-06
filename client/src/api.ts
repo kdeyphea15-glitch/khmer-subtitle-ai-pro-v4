@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { DubbingResult, Emotion } from "./types";
+import type { DubbingResult, Emotion, TtsProvider } from "./types";
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
@@ -25,12 +25,14 @@ export interface RunDubbingPayload {
   file: File;
   sourceLanguage: string;
   removeOriginalVoices: boolean;
+  ttsProvider: TtsProvider;
   voiceName: string;
   voiceSpeed: number;
   voiceVolume: number;
   emotion: Emotion;
   geminiApiKey?: string;
   groqApiKey?: string;
+  openaiApiKey?: string;
 }
 
 export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingResult> {
@@ -38,6 +40,7 @@ export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingRes
   form.append("video", payload.file);
   form.append("sourceLanguage", payload.sourceLanguage);
   form.append("removeOriginalVoices", String(payload.removeOriginalVoices));
+  form.append("ttsProvider", payload.ttsProvider);
   form.append("voiceName", payload.voiceName);
   form.append("voiceSpeed", String(payload.voiceSpeed));
   form.append("voiceVolume", String(payload.voiceVolume));
@@ -48,6 +51,9 @@ export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingRes
   }
   if (payload.groqApiKey) {
     form.append("groqApiKey", payload.groqApiKey);
+  }
+  if (payload.openaiApiKey) {
+    form.append("openaiApiKey", payload.openaiApiKey);
   }
 
   const { data } = await api.post<DubbingResult>("/dubbing/run", form, {
@@ -61,11 +67,13 @@ export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingRes
 
 export async function previewVoice(payload: {
   text: string;
+  ttsProvider: TtsProvider;
   voiceName: string;
   voiceSpeed: number;
   voiceVolume: number;
   emotion: Emotion;
   geminiApiKey?: string;
+  openaiApiKey?: string;
 }): Promise<{ audioUrl: string }> {
   const { data } = await api.post<{ audioUrl: string }>("/dubbing/preview-voice", payload);
   return data;
