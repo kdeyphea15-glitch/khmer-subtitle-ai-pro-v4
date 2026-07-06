@@ -29,7 +29,7 @@ export interface RunDubbingPayload {
   backgroundAudioVolumePercent: number;
   aiVoiceVolumePercent: number;
   ttsProvider: TtsProvider;
-  voiceName: string;
+  voiceName?: string;
   voiceSpeed: number;
   voiceVolume: number;
   emotion: Emotion;
@@ -47,7 +47,9 @@ export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingRes
   form.append("backgroundAudioVolumePercent", String(payload.backgroundAudioVolumePercent));
   form.append("aiVoiceVolumePercent", String(payload.aiVoiceVolumePercent));
   form.append("ttsProvider", payload.ttsProvider);
-  form.append("voiceName", payload.voiceName);
+  if (payload.voiceName?.trim()) {
+    form.append("voiceName", payload.voiceName.trim());
+  }
   form.append("voiceSpeed", String(payload.voiceSpeed));
   form.append("voiceVolume", String(payload.voiceVolume));
   form.append("emotion", payload.emotion);
@@ -74,14 +76,18 @@ export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingRes
 export async function previewVoice(payload: {
   text: string;
   ttsProvider: TtsProvider;
-  voiceName: string;
+  voiceName?: string;
   voiceSpeed: number;
   voiceVolume: number;
   emotion: Emotion;
   geminiApiKey?: string;
   openaiApiKey?: string;
 }): Promise<{ audioUrl: string }> {
-  const { data } = await api.post<{ audioUrl: string }>("/dubbing/preview-voice", payload);
+  const requestPayload = {
+    ...payload,
+    ...(payload.voiceName?.trim() ? { voiceName: payload.voiceName.trim() } : {})
+  };
+  const { data } = await api.post<{ audioUrl: string }>("/dubbing/preview-voice", requestPayload);
   return data;
 }
 

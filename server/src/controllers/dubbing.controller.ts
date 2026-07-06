@@ -12,10 +12,10 @@ const requestSchema = z.object({
   originalVocalVolumePercent: z.coerce.number().min(0).max(30).default(0),
   backgroundAudioVolumePercent: z.coerce.number().min(50).max(120).default(100),
   aiVoiceVolumePercent: z.coerce.number().min(50).max(150).default(100),
-  voiceName: z.string().min(3),
+  voiceName: z.string().min(3).default("alloy"),
   voiceSpeed: z.coerce.number().min(0.5).max(1.8).default(1),
   voiceVolume: z.coerce.number().min(-12).max(12).default(0),
-  emotion: z.enum(["normal", "happy", "sad", "angry", "romantic"]).default("normal"),
+  emotion: z.enum(["normal", "happy", "sad", "angry", "romantic"]).optional().default("normal"),
   geminiApiKey: z.string().optional(),
   groqApiKey: z.string().optional(),
   openaiApiKey: z.string().optional()
