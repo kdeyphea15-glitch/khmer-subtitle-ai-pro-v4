@@ -54,7 +54,8 @@ export async function runDubbing(req: Request, res: Response): Promise<void> {
         targetLanguage: "km",
         removeOriginalVoices: payload.removeOriginalVoices,
         geminiApiKey: payload.geminiApiKey || env.GEMINI_API_KEY,
-        groqApiKey: payload.groqApiKey || env.GROQ_API_KEY
+        groqApiKey: payload.groqApiKey || env.GROQ_API_KEY,
+        openaiApiKey: env.OPENAI_API_KEY
       },
       voice: {
         name: payload.voiceName,
@@ -105,7 +106,7 @@ export async function previewVoice(req: Request, res: Response): Promise<void> {
       volumeGainDb: payload.voiceVolume,
       emotion: payload.emotion
     },
-    payload.geminiApiKey || env.GEMINI_API_KEY
+    env.OPENAI_API_KEY
   );
 
   const audioFileName = path.basename(synthesized.filePath);

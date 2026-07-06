@@ -134,7 +134,7 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
       translated.translatedSubtitles,
       generatedVoiceSegmentsDir,
       input.voice,
-      input.settings.geminiApiKey
+      input.settings.openaiApiKey
     );
 
     if (!synthesizedSegments.length) {

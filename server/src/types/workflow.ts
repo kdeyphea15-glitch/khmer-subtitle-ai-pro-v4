@@ -13,6 +13,7 @@ export interface DubbingSettings {
   removeOriginalVoices: boolean;
   geminiApiKey?: string;
   groqApiKey?: string;
+  openaiApiKey?: string;
 }
 
 export interface SubtitleCue {
