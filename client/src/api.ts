@@ -40,29 +40,31 @@ export interface RunDubbingPayload {
 
 export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingResult> {
   const form = new FormData();
+
+  const appendIfDefined = (key: string, value: string | undefined) => {
+    if (value !== undefined) {
+      form.append(key, value);
+    }
+  };
+
+  const normalizedSourceLanguage = payload.sourceLanguage?.trim() || "auto";
+  const normalizedVoiceName = payload.voiceName?.trim() || "alloy";
+  const normalizedEmotion = payload.emotion || "normal";
+
   form.append("video", payload.file);
-  form.append("sourceLanguage", payload.sourceLanguage);
+  form.append("sourceLanguage", normalizedSourceLanguage);
+  form.append("voiceName", normalizedVoiceName);
+  form.append("voiceSpeed", String(payload.voiceSpeed));
+  form.append("voiceVolume", String(payload.voiceVolume));
+  form.append("emotion", normalizedEmotion);
   form.append("removeOriginalVoices", String(payload.removeOriginalVoices));
   form.append("originalVocalVolumePercent", String(payload.originalVocalVolumePercent));
   form.append("backgroundAudioVolumePercent", String(payload.backgroundAudioVolumePercent));
   form.append("aiVoiceVolumePercent", String(payload.aiVoiceVolumePercent));
   form.append("ttsProvider", payload.ttsProvider);
-  if (payload.voiceName?.trim()) {
-    form.append("voiceName", payload.voiceName.trim());
-  }
-  form.append("voiceSpeed", String(payload.voiceSpeed));
-  form.append("voiceVolume", String(payload.voiceVolume));
-  form.append("emotion", payload.emotion);
-
-  if (payload.geminiApiKey) {
-    form.append("geminiApiKey", payload.geminiApiKey);
-  }
-  if (payload.groqApiKey) {
-    form.append("groqApiKey", payload.groqApiKey);
-  }
-  if (payload.openaiApiKey) {
-    form.append("openaiApiKey", payload.openaiApiKey);
-  }
+  appendIfDefined("geminiApiKey", payload.geminiApiKey?.trim() ? payload.geminiApiKey.trim() : undefined);
+  appendIfDefined("groqApiKey", payload.groqApiKey?.trim() ? payload.groqApiKey.trim() : undefined);
+  appendIfDefined("openaiApiKey", payload.openaiApiKey?.trim() ? payload.openaiApiKey.trim() : undefined);
 
   const { data } = await api.post<DubbingResult>("/dubbing/run", form, {
     headers: {

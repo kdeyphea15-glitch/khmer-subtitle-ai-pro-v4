@@ -7,7 +7,10 @@ import { runDubbingWorkflow } from "../services/workflow.service.js";
 import { synthesizeKhmerVoice } from "../services/tts.service.js";
 
 const requestSchema = z.object({
-  sourceLanguage: z.string().min(2).default("auto"),
+  sourceLanguage: z.preprocess(
+    (value) => (value === "" || value === null || value === undefined ? undefined : value),
+    z.string().min(2).default("auto")
+  ),
   removeOriginalVoices: z.coerce.boolean().default(false),
   originalVocalVolumePercent: z.coerce.number().min(0).max(30).default(0),
   backgroundAudioVolumePercent: z.coerce.number().min(50).max(120).default(100),
@@ -15,10 +18,13 @@ const requestSchema = z.object({
   voiceName: z.string().min(3).default("alloy"),
   voiceSpeed: z.coerce.number().min(0.5).max(1.8).default(1),
   voiceVolume: z.coerce.number().min(-12).max(12).default(0),
-  emotion: z.enum(["normal", "happy", "sad", "angry", "romantic"]).optional().default("normal"),
-  geminiApiKey: z.string().optional(),
-  groqApiKey: z.string().optional(),
-  openaiApiKey: z.string().optional()
+  emotion: z.preprocess(
+    (value) => (value === "" || value === null || value === undefined ? undefined : value),
+    z.enum(["normal", "happy", "sad", "angry", "romantic"]).default("normal")
+  ),
+  geminiApiKey: z.preprocess((value) => (value === "" ? undefined : value), z.string().optional()),
+  groqApiKey: z.preprocess((value) => (value === "" ? undefined : value), z.string().optional()),
+  openaiApiKey: z.preprocess((value) => (value === "" ? undefined : value), z.string().optional())
 });
 
 const previewSchema = z.object({
@@ -32,13 +38,14 @@ const previewSchema = z.object({
 
 export async function runDubbing(req: Request, res: Response): Promise<void> {
   try {
+    const isDevelopment = process.env.NODE_ENV !== "production";
     const uploadedFile = req.file;
 
     if (!uploadedFile) {
       const error = new Error("Video file is required.");
       console.error("[runDubbing][400] Missing video file");
       console.error("[runDubbing][400] req.body:", req.body);
-      console.error("[runDubbing][400] req.files:", (req as Request & { files?: unknown }).files);
+      console.error("[runDubbing][400] req.file:", req.file);
       console.error("[runDubbing][400] validation result:", { success: false, reason: "missing video file" });
       console.error("[runDubbing][400] stack:", error.stack);
       res.status(400).json({ success: false, error: error.message });
@@ -51,10 +58,14 @@ export async function runDubbing(req: Request, res: Response): Promise<void> {
       const error = new Error("Invalid request body.");
       console.error("[runDubbing][400] Request body validation failed");
       console.error("[runDubbing][400] req.body:", req.body);
-      console.error("[runDubbing][400] req.files:", (req as Request & { files?: unknown }).files);
+      console.error("[runDubbing][400] req.file:", req.file);
       console.error("[runDubbing][400] validation result:", parsed.error.flatten());
       console.error("[runDubbing][400] stack:", error.stack);
-      res.status(400).json({ success: false, error: error.message });
+      res.status(400).json({
+        success: false,
+        error: error.message,
+        ...(isDevelopment ? { details: parsed.error.flatten() } : {})
+      });
       return;
     }
 
