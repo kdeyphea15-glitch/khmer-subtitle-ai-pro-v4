@@ -36,4 +36,7 @@ export interface SettingsState {
   groqApiKey: string;
   openaiApiKey: string;
   ttsProvider: TtsProvider;
+  originalVocalVolumePercent: number;
+  backgroundAudioVolumePercent: number;
+  aiVoiceVolumePercent: number;
 }

@@ -25,6 +25,9 @@ export interface RunDubbingPayload {
   file: File;
   sourceLanguage: string;
   removeOriginalVoices: boolean;
+  originalVocalVolumePercent: number;
+  backgroundAudioVolumePercent: number;
+  aiVoiceVolumePercent: number;
   ttsProvider: TtsProvider;
   voiceName: string;
   voiceSpeed: number;
@@ -40,6 +43,9 @@ export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingRes
   form.append("video", payload.file);
   form.append("sourceLanguage", payload.sourceLanguage);
   form.append("removeOriginalVoices", String(payload.removeOriginalVoices));
+  form.append("originalVocalVolumePercent", String(payload.originalVocalVolumePercent));
+  form.append("backgroundAudioVolumePercent", String(payload.backgroundAudioVolumePercent));
+  form.append("aiVoiceVolumePercent", String(payload.aiVoiceVolumePercent));
   form.append("ttsProvider", payload.ttsProvider);
   form.append("voiceName", payload.voiceName);
   form.append("voiceSpeed", String(payload.voiceSpeed));

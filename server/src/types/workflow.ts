@@ -11,6 +11,9 @@ export interface DubbingSettings {
   sourceLanguage: string;
   targetLanguage: "km";
   removeOriginalVoices: boolean;
+  originalVocalVolumePercent: number;
+  backgroundAudioVolumePercent: number;
+  aiVoiceVolumePercent: number;
   geminiApiKey?: string;
   groqApiKey?: string;
   openaiApiKey?: string;

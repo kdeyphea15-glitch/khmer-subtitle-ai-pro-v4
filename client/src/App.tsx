@@ -27,6 +27,9 @@ const GEMINI_KEY_STORAGE = "khmer-v4-gemini-api-key";
 const GROQ_KEY_STORAGE = "khmer-v4-groq-api-key";
 const OPENAI_KEY_STORAGE = "khmer-v4-openai-api-key";
 const TTS_PROVIDER_STORAGE = "khmer-v4-tts-provider";
+const ORIGINAL_VOCAL_VOLUME_STORAGE = "khmer-v4-original-vocal-volume";
+const BACKGROUND_VOLUME_STORAGE = "khmer-v4-background-volume";
+const AI_VOICE_VOLUME_STORAGE = "khmer-v4-ai-voice-volume";
 const SUBTITLE_DEFAULT_FONT_SIZE = 20;
 const SUBTITLE_MIN_FONT_SIZE = 16;
 const SUBTITLE_MAX_FONT_SIZE = 28;
@@ -46,6 +49,11 @@ function readStoredValue(key: string): string {
 function readStoredTtsProvider(): "openai" | "gemini" {
   const value = readStoredValue(TTS_PROVIDER_STORAGE).toLowerCase();
   return value === "gemini" ? "gemini" : "openai";
+}
+
+function readStoredNumber(key: string, fallback: number): number {
+  const value = Number(readStoredValue(key));
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function formatTime(seconds: number): string {
@@ -203,7 +211,6 @@ function App() {
   const [voiceName, setVoiceName] = useState(voiceChoices[0].value);
   const [emotion, setEmotion] = useState<Emotion>("normal");
   const [voiceSpeed, setVoiceSpeed] = useState(1);
-  const [voiceVolume, setVoiceVolume] = useState(0);
   const [voicePreviewText, setVoicePreviewText] = useState("សូមស្វាគមន៍មកកាន់ Khmer Subtitle AI Pro V4");
   const [voicePreviewUrl, setVoicePreviewUrl] = useState("");
   const [running, setRunning] = useState(false);
@@ -218,7 +225,10 @@ function App() {
     geminiApiKey: readStoredValue(GEMINI_KEY_STORAGE),
     groqApiKey: readStoredValue(GROQ_KEY_STORAGE),
     openaiApiKey: readStoredValue(OPENAI_KEY_STORAGE),
-    ttsProvider: readStoredTtsProvider()
+    ttsProvider: readStoredTtsProvider(),
+    originalVocalVolumePercent: readStoredNumber(ORIGINAL_VOCAL_VOLUME_STORAGE, 0),
+    backgroundAudioVolumePercent: readStoredNumber(BACKGROUND_VOLUME_STORAGE, 100),
+    aiVoiceVolumePercent: readStoredNumber(AI_VOICE_VOLUME_STORAGE, 100)
   });
 
   const [previewVideoUrl, setPreviewVideoUrl] = useState("");
@@ -238,6 +248,18 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(TTS_PROVIDER_STORAGE, settings.ttsProvider);
   }, [settings.ttsProvider]);
+
+  useEffect(() => {
+    window.localStorage.setItem(ORIGINAL_VOCAL_VOLUME_STORAGE, String(settings.originalVocalVolumePercent));
+  }, [settings.originalVocalVolumePercent]);
+
+  useEffect(() => {
+    window.localStorage.setItem(BACKGROUND_VOLUME_STORAGE, String(settings.backgroundAudioVolumePercent));
+  }, [settings.backgroundAudioVolumePercent]);
+
+  useEffect(() => {
+    window.localStorage.setItem(AI_VOICE_VOLUME_STORAGE, String(settings.aiVoiceVolumePercent));
+  }, [settings.aiVoiceVolumePercent]);
 
   useEffect(() => {
     checkBackendHealth()
@@ -368,7 +390,7 @@ function App() {
         ttsProvider: settings.ttsProvider,
         voiceName,
         voiceSpeed,
-        voiceVolume,
+        voiceVolume: 0,
         emotion,
         geminiApiKey: settings.geminiApiKey || undefined,
         openaiApiKey: settings.openaiApiKey || undefined
@@ -389,7 +411,7 @@ function App() {
     voiceName,
     voicePreviewText,
     voiceSpeed,
-    voiceVolume
+    settings.aiVoiceVolumePercent
   ]);
 
   const handleRun = useCallback(async () => {
@@ -417,10 +439,13 @@ function App() {
         file,
         sourceLanguage,
         removeOriginalVoices,
+        originalVocalVolumePercent: settings.originalVocalVolumePercent,
+        backgroundAudioVolumePercent: settings.backgroundAudioVolumePercent,
+        aiVoiceVolumePercent: settings.aiVoiceVolumePercent,
         ttsProvider: settings.ttsProvider,
         voiceName,
         voiceSpeed,
-        voiceVolume,
+        voiceVolume: 0,
         emotion,
         geminiApiKey: settings.geminiApiKey || undefined,
         groqApiKey: settings.groqApiKey || undefined,
@@ -453,11 +478,13 @@ function App() {
     settings.groqApiKey,
     settings.openaiApiKey,
     settings.ttsProvider,
+    settings.originalVocalVolumePercent,
+    settings.backgroundAudioVolumePercent,
+    settings.aiVoiceVolumePercent,
     sourceLanguage,
     providerMissingMessage,
     voiceName,
-    voiceSpeed,
-    voiceVolume
+    voiceSpeed
   ]);
 
   const handleAudioError = useCallback((message: string) => {
@@ -574,6 +601,48 @@ function App() {
                   onChange={(event) => setRemoveOriginalVoices(event.target.checked)}
                 />
               </label>
+
+              <label>
+                Original Vocal Volume ({settings.originalVocalVolumePercent}%)
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={settings.originalVocalVolumePercent}
+                  onChange={(event) =>
+                    setSettings((state) => ({ ...state, originalVocalVolumePercent: Number(event.target.value) }))
+                  }
+                />
+              </label>
+
+              <label>
+                Background Audio Volume ({settings.backgroundAudioVolumePercent}%)
+                <input
+                  type="range"
+                  min={50}
+                  max={120}
+                  step={1}
+                  value={settings.backgroundAudioVolumePercent}
+                  onChange={(event) =>
+                    setSettings((state) => ({ ...state, backgroundAudioVolumePercent: Number(event.target.value) }))
+                  }
+                />
+              </label>
+
+              <label>
+                AI Voice Volume ({settings.aiVoiceVolumePercent}%)
+                <input
+                  type="range"
+                  min={50}
+                  max={150}
+                  step={1}
+                  value={settings.aiVoiceVolumePercent}
+                  onChange={(event) =>
+                    setSettings((state) => ({ ...state, aiVoiceVolumePercent: Number(event.target.value) }))
+                  }
+                />
+              </label>
             </div>
 
             <p className="panel-help">
@@ -629,14 +698,16 @@ function App() {
               </label>
 
               <label>
-                Voice Volume ({voiceVolume.toFixed(0)} dB)
+                AI Voice Volume ({settings.aiVoiceVolumePercent}%)
                 <input
                   type="range"
-                  min={-12}
-                  max={12}
+                  min={50}
+                  max={150}
                   step={1}
-                  value={voiceVolume}
-                  onChange={(event) => setVoiceVolume(Number(event.target.value))}
+                  value={settings.aiVoiceVolumePercent}
+                  onChange={(event) =>
+                    setSettings((state) => ({ ...state, aiVoiceVolumePercent: Number(event.target.value) }))
+                  }
                 />
               </label>
             </div>

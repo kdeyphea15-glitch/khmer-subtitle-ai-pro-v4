@@ -74,8 +74,17 @@ export async function mergeVoiceWithVideo(
   inputVideoPath: string,
   dubbedAudioPath: string,
   outputVideoPath: string,
-  instrumentalAudioPath?: string
+  instrumentalAudioPath?: string,
+  mixOptions?: {
+    originalVocalVolume?: number;
+    backgroundAudioVolume?: number;
+    aiVoiceVolume?: number;
+  }
 ): Promise<void> {
+  const originalVocalVolume = Math.max(0, mixOptions?.originalVocalVolume ?? 0);
+  const backgroundAudioVolume = Math.max(0, mixOptions?.backgroundAudioVolume ?? 1);
+  const aiVoiceVolume = Math.max(0, mixOptions?.aiVoiceVolume ?? 1);
+
   const command = ffmpeg().input(inputVideoPath);
 
   if (instrumentalAudioPath) {
@@ -84,7 +93,7 @@ export async function mergeVoiceWithVideo(
         .input(instrumentalAudioPath)
         .input(dubbedAudioPath)
         .outputOptions([
-          "-filter_complex [1:a:0]volume=1.0[instrumental];[2:a:0]volume=1.0[khmer];[instrumental][khmer]amix=inputs=2:duration=first:dropout_transition=2[mixed]",
+          `-filter_complex [1:a:0]volume=${backgroundAudioVolume.toFixed(3)}[instrumental];[2:a:0]volume=${aiVoiceVolume.toFixed(3)}[khmer];[instrumental][khmer]amix=inputs=2:duration=first:dropout_transition=2[mixed]`,
           "-map 0:v:0",
           "-map [mixed]",
           "-c:v copy",
@@ -101,7 +110,7 @@ export async function mergeVoiceWithVideo(
     command
       .input(dubbedAudioPath)
       .outputOptions([
-        "-filter_complex [0:a:0]volume=0.35[orig];[1:a:0]volume=1.0[khmer];[orig][khmer]amix=inputs=2:duration=first:dropout_transition=2[mixed]",
+        `-filter_complex [0:a:0]volume=${originalVocalVolume.toFixed(3)}[orig];[1:a:0]volume=${aiVoiceVolume.toFixed(3)}[khmer];[orig][khmer]amix=inputs=2:duration=first:dropout_transition=2[mixed]`,
         "-map 0:v:0",
         "-map [mixed]",
         "-c:v copy",

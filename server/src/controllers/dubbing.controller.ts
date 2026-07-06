@@ -9,12 +9,16 @@ import { synthesizeKhmerVoice } from "../services/tts.service.js";
 const requestSchema = z.object({
   sourceLanguage: z.string().min(2).default("auto"),
   removeOriginalVoices: z.coerce.boolean().default(false),
+  originalVocalVolumePercent: z.coerce.number().min(0).max(30).default(0),
+  backgroundAudioVolumePercent: z.coerce.number().min(50).max(120).default(100),
+  aiVoiceVolumePercent: z.coerce.number().min(50).max(150).default(100),
   voiceName: z.string().min(3),
   voiceSpeed: z.coerce.number().min(0.5).max(1.8).default(1),
   voiceVolume: z.coerce.number().min(-12).max(12).default(0),
   emotion: z.enum(["normal", "happy", "sad", "angry", "romantic"]).default("normal"),
   geminiApiKey: z.string().optional(),
-  groqApiKey: z.string().optional()
+  groqApiKey: z.string().optional(),
+  openaiApiKey: z.string().optional()
 });
 
 const previewSchema = z.object({
@@ -51,9 +55,12 @@ export async function runDubbing(req: Request, res: Response): Promise<void> {
         sourceLanguage: payload.sourceLanguage,
         targetLanguage: "km",
         removeOriginalVoices: payload.removeOriginalVoices,
+        originalVocalVolumePercent: payload.originalVocalVolumePercent,
+        backgroundAudioVolumePercent: payload.backgroundAudioVolumePercent,
+        aiVoiceVolumePercent: payload.aiVoiceVolumePercent,
         geminiApiKey: payload.geminiApiKey || env.GEMINI_API_KEY,
         groqApiKey: payload.groqApiKey || env.GROQ_API_KEY,
-        openaiApiKey: env.OPENAI_API_KEY
+        openaiApiKey: payload.openaiApiKey || env.OPENAI_API_KEY
       },
       voice: {
         name: payload.voiceName,

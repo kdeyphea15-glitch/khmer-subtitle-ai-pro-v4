@@ -72,6 +72,7 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
   const exportedVideoPath = path.join(EXPORT_DIR, `${jobId}.mp4`);
   const demucsTempDir = path.join(TEMP_DIR, `demucs-${jobId}`);
   let instrumentalAudioPath: string | undefined;
+  let demucsFallbackWarning: string | undefined;
 
   try {
     console.log(
@@ -96,11 +97,12 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
       } catch (error) {
         const message = error instanceof DemucsError ? error.message : "Unknown Demucs error";
         console.error(`[Workflow:${jobId}] Demucs separation failed: ${message}`);
+        demucsFallbackWarning = `Demucs failed (${message}). Using fallback mix with very low original audio.`;
         setStepStatus(
           steps,
           "separate-vocals",
-          "completed",
-          `Demucs failed (${message}). Continuing with original-audio fallback.`
+          "failed",
+          demucsFallbackWarning
         );
       }
     } else {
@@ -176,7 +178,22 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
     setStepStatus(steps, "generate-voice", "completed");
 
     setStepStatus(steps, "replace-audio", "running");
-    await mergeVoiceWithVideo(input.sourceVideoPath, normalizedVoicePath, exportedVideoPath, instrumentalAudioPath);
+    const originalVocalVolume =
+      input.settings.removeOriginalVoices && !instrumentalAudioPath
+        ? Math.min(input.settings.originalVocalVolumePercent / 100, 0.1)
+        : input.settings.removeOriginalVoices
+          ? input.settings.originalVocalVolumePercent / 100
+          : input.settings.backgroundAudioVolumePercent / 100;
+
+    if (demucsFallbackWarning) {
+      console.warn(`[Workflow:${jobId}] ${demucsFallbackWarning} originalVolume=${originalVocalVolume.toFixed(3)}`);
+    }
+
+    await mergeVoiceWithVideo(input.sourceVideoPath, normalizedVoicePath, exportedVideoPath, instrumentalAudioPath, {
+      originalVocalVolume,
+      backgroundAudioVolume: input.settings.backgroundAudioVolumePercent / 100,
+      aiVoiceVolume: input.settings.aiVoiceVolumePercent / 100
+    });
     setStepStatus(steps, "replace-audio", "completed");
 
     setStepStatus(steps, "export", "running");
