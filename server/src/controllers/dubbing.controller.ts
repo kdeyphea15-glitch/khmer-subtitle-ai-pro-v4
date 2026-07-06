@@ -31,23 +31,35 @@ const previewSchema = z.object({
 });
 
 export async function runDubbing(req: Request, res: Response): Promise<void> {
-  const uploadedFile = req.file;
-
-  if (!uploadedFile) {
-    res.status(400).json({ error: "Video file is required." });
-    return;
-  }
-
-  const parsed = requestSchema.safeParse(req.body);
-
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid request body.", details: parsed.error.flatten() });
-    return;
-  }
-
-  const payload = parsed.data;
-
   try {
+    const uploadedFile = req.file;
+
+    if (!uploadedFile) {
+      const error = new Error("Video file is required.");
+      console.error("[runDubbing][400] Missing video file");
+      console.error("[runDubbing][400] req.body:", req.body);
+      console.error("[runDubbing][400] req.files:", (req as Request & { files?: unknown }).files);
+      console.error("[runDubbing][400] validation result:", { success: false, reason: "missing video file" });
+      console.error("[runDubbing][400] stack:", error.stack);
+      res.status(400).json({ success: false, error: error.message });
+      return;
+    }
+
+    const parsed = requestSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      const error = new Error("Invalid request body.");
+      console.error("[runDubbing][400] Request body validation failed");
+      console.error("[runDubbing][400] req.body:", req.body);
+      console.error("[runDubbing][400] req.files:", (req as Request & { files?: unknown }).files);
+      console.error("[runDubbing][400] validation result:", parsed.error.flatten());
+      console.error("[runDubbing][400] stack:", error.stack);
+      res.status(400).json({ success: false, error: error.message });
+      return;
+    }
+
+    const payload = parsed.data;
+
     const result = await runDubbingWorkflow({
       sourceVideoPath: uploadedFile.path,
       sourceFileName: uploadedFile.originalname,
@@ -76,8 +88,16 @@ export async function runDubbing(req: Request, res: Response): Promise<void> {
     }
 
     res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown runDubbing error";
+    console.error("[runDubbing][catch] Unhandled error:", error);
+    if (error instanceof Error) {
+      console.error("[runDubbing][catch] stack:", error.stack);
+    }
+    res.status(500).json({ success: false, error: message });
   } finally {
-    if (fs.existsSync(uploadedFile.path)) {
+    const uploadedFile = req.file;
+    if (uploadedFile?.path && fs.existsSync(uploadedFile.path)) {
       fs.rmSync(uploadedFile.path, { force: true });
     }
   }
