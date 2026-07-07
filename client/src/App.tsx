@@ -52,8 +52,16 @@ function readStoredTtsProvider(): "openai" | "gemini" {
 }
 
 function readStoredNumber(key: string, fallback: number): number {
-  const value = Number(readStoredValue(key));
+  const stored = readStoredValue(key).trim();
+  if (!stored) return fallback;
+
+  const value = Number(stored);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
 }
 
 function formatTime(seconds: number): string {
@@ -439,9 +447,9 @@ function App() {
         file,
         sourceLanguage,
         removeOriginalVoices,
-        originalVocalVolumePercent: settings.originalVocalVolumePercent,
-        backgroundAudioVolumePercent: settings.backgroundAudioVolumePercent,
-        aiVoiceVolumePercent: settings.aiVoiceVolumePercent,
+        originalVocalVolumePercent: clampNumber(settings.originalVocalVolumePercent, 0, 30, 0),
+        backgroundAudioVolumePercent: clampNumber(settings.backgroundAudioVolumePercent, 50, 120, 100),
+        aiVoiceVolumePercent: clampNumber(settings.aiVoiceVolumePercent, 50, 150, 100),
         ttsProvider: settings.ttsProvider,
         voiceName,
         voiceSpeed,
@@ -489,6 +497,15 @@ function App() {
 
   const handleAudioError = useCallback((message: string) => {
     setError(message);
+  }, []);
+
+  const handleResetAudioLevels = useCallback(() => {
+    setSettings((state) => ({
+      ...state,
+      originalVocalVolumePercent: 0,
+      backgroundAudioVolumePercent: 100,
+      aiVoiceVolumePercent: 100
+    }));
   }, []);
 
   return (
@@ -643,6 +660,10 @@ function App() {
                   }
                 />
               </label>
+
+              <button type="button" className="secondary-button" onClick={handleResetAudioLevels}>
+                Reset Audio Levels
+              </button>
             </div>
 
             <p className="panel-help">
