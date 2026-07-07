@@ -97,7 +97,7 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
       } catch (error) {
         const message = error instanceof DemucsError ? error.message : "Unknown Demucs error";
         console.error(`[Workflow:${jobId}] Demucs separation failed: ${message}`);
-        demucsFallbackWarning = `Demucs failed (${message}). Using fallback mix with very low original audio.`;
+        demucsFallbackWarning = `Demucs failed (${message}). Continuing export with original audio fallback volume.`;
         setStepStatus(
           steps,
           "separate-vocals",
@@ -180,7 +180,7 @@ export async function runDubbingWorkflow(input: WorkflowInput): Promise<DubbingR
     setStepStatus(steps, "replace-audio", "running");
     const originalVocalVolume =
       input.settings.removeOriginalVoices && !instrumentalAudioPath
-        ? Math.min(input.settings.originalVocalVolumePercent / 100, 0.1)
+        ? input.settings.originalVocalVolumePercent / 100
         : input.settings.removeOriginalVoices
           ? input.settings.originalVocalVolumePercent / 100
           : input.settings.backgroundAudioVolumePercent / 100;

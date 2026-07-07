@@ -21,7 +21,10 @@ function getRootDir(): string {
 function getDemucsVenvPythonPath(): string | undefined {
   const rootDir = getRootDir();
   const venvDir = path.join(rootDir, ".venv-demucs");
-  const candidates = [path.join(venvDir, "bin", "python3"), path.join(venvDir, "bin", "python")];
+  const linuxOrRender = process.platform === "linux" || process.env.RENDER === "true";
+  const candidates = linuxOrRender
+    ? [path.join(venvDir, "bin", "python"), path.join(venvDir, "bin", "python3")]
+    : [path.join(venvDir, "bin", "python3"), path.join(venvDir, "bin", "python")];
 
   return candidates.find((candidatePath) => fs.existsSync(candidatePath));
 }
@@ -29,11 +32,12 @@ function getDemucsVenvPythonPath(): string | undefined {
 function getMissingDemucsMessage(): string {
   return [
     "Demucs is unavailable: expected a Python virtual environment at .venv-demucs with Demucs installed.",
-    "macOS setup:",
+    "Setup:",
     "1) python3 -m venv .venv-demucs",
     "2) source .venv-demucs/bin/activate",
-    "3) python3 -m pip install --upgrade pip demucs",
-    "4) Restart the server"
+    "3) python3 -m pip install --upgrade pip",
+    "4) python3 -m pip install demucs",
+    "5) Restart the server"
   ].join(" ");
 }
 
