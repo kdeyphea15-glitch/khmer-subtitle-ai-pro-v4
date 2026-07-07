@@ -41,30 +41,43 @@ export interface RunDubbingPayload {
 export async function runDubbing(payload: RunDubbingPayload): Promise<DubbingResult> {
   const form = new FormData();
 
-  const appendIfDefined = (key: string, value: string | undefined) => {
-    if (value !== undefined) {
-      form.append(key, value);
-    }
-  };
-
   const normalizedSourceLanguage = payload.sourceLanguage?.trim() || "auto";
   const normalizedVoiceName = payload.voiceName?.trim() || "alloy";
+  const normalizedVoiceSpeed = String(payload.voiceSpeed ?? 1);
+  const normalizedVoiceVolume = String(payload.voiceVolume ?? 0);
   const normalizedEmotion = payload.emotion || "normal";
+  const normalizedRemoveOriginalVoices = String(payload.removeOriginalVoices ?? false);
+  const normalizedOriginalVocalVolumePercent = String(payload.originalVocalVolumePercent ?? 0);
+  const normalizedBackgroundAudioVolumePercent = String(payload.backgroundAudioVolumePercent ?? 100);
+  const normalizedAiVoiceVolumePercent = String(payload.aiVoiceVolumePercent ?? 100);
 
   form.append("video", payload.file);
   form.append("sourceLanguage", normalizedSourceLanguage);
+  form.append("removeOriginalVoices", normalizedRemoveOriginalVoices);
+  form.append("originalVocalVolumePercent", normalizedOriginalVocalVolumePercent);
+  form.append("backgroundAudioVolumePercent", normalizedBackgroundAudioVolumePercent);
+  form.append("aiVoiceVolumePercent", normalizedAiVoiceVolumePercent);
   form.append("voiceName", normalizedVoiceName);
-  form.append("voiceSpeed", String(payload.voiceSpeed));
-  form.append("voiceVolume", String(payload.voiceVolume));
+  form.append("voiceSpeed", normalizedVoiceSpeed);
+  form.append("voiceVolume", normalizedVoiceVolume);
   form.append("emotion", normalizedEmotion);
-  form.append("removeOriginalVoices", String(payload.removeOriginalVoices));
-  form.append("originalVocalVolumePercent", String(payload.originalVocalVolumePercent));
-  form.append("backgroundAudioVolumePercent", String(payload.backgroundAudioVolumePercent));
-  form.append("aiVoiceVolumePercent", String(payload.aiVoiceVolumePercent));
   form.append("ttsProvider", payload.ttsProvider);
-  appendIfDefined("geminiApiKey", payload.geminiApiKey?.trim() ? payload.geminiApiKey.trim() : undefined);
-  appendIfDefined("groqApiKey", payload.groqApiKey?.trim() ? payload.groqApiKey.trim() : undefined);
-  appendIfDefined("openaiApiKey", payload.openaiApiKey?.trim() ? payload.openaiApiKey.trim() : undefined);
+
+  const geminiApiKey = payload.geminiApiKey?.trim();
+  const groqApiKey = payload.groqApiKey?.trim();
+  const openaiApiKey = payload.openaiApiKey?.trim();
+
+  if (geminiApiKey) {
+    form.append("geminiApiKey", geminiApiKey);
+  }
+  if (groqApiKey) {
+    form.append("groqApiKey", groqApiKey);
+  }
+  if (openaiApiKey) {
+    form.append("openaiApiKey", openaiApiKey);
+  }
+
+  console.log("[runDubbing] FormData keys:", Array.from(form.keys()));
 
   const { data } = await api.post<DubbingResult>("/dubbing/run", form, {
     headers: {
